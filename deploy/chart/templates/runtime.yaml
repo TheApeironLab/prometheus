@@ -72,7 +72,7 @@ spec:
             capabilities: {drop: [ALL]}
           readinessProbe:
             exec:
-              command: [/bin/wget, -q, -O, /dev/null, 'http://127.0.0.1:9090/-/ready']
+              command: [/bin/wget, -Y, "off", -q, -O, /dev/null, 'http://127.0.0.1:9090/-/ready']
           resources: {{ toYaml .Values.resources.prometheus | nindent 12 }}
           volumeMounts:
             - {name: config, mountPath: /etc/prometheus, readOnly: true}

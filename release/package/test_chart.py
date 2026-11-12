@@ -26,6 +26,7 @@ class ChartContract(unittest.TestCase):
         prometheus, proxy = pod['containers']
         self.assertIn('--web.listen-address=127.0.0.1:9090', prometheus['args'])
         self.assertNotIn('--web.enable-admin-api', prometheus['args'])
+        self.assertEqual(prometheus['readinessProbe']['exec']['command'][1:3], ['-Y', 'off'])
         self.assertIn('--code-challenge-method=S256', proxy['args'])
         self.assertIn('--allowed-group=prometheus-readers', proxy['args'])
         service = next(d for d in docs if d['kind'] == 'Service')
