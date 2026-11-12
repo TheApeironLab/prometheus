@@ -1,0 +1,50 @@
+# Image digests are populated in the packaged chart from images.lock.json.
+images:
+  prometheus: ""
+  oauth2Proxy: ""
+imagePullSecrets: []
+site:
+  host: ""
+  issuerUrl: ""
+  clientId: ""
+  # Existing Secret: client-secret and cookie-secret (32 random bytes, base64).
+  oidcSecret: ""
+  # IAM must emit a groups claim; access fails closed without an allowed group.
+  allowedGroups: []
+  groupsClaim: groups
+  # Optional existing Secret containing ca.crt for private IAM TLS.
+  caSecret: ""
+ingress:
+  className: traefik
+  clusterIssuer: ""
+  tlsSecret: prometheus-tls
+storage:
+  size: 10Gi
+  storageClassName: local-path
+  retain: true
+retention: 7d
+resources:
+  prometheus:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
+  oauth2Proxy:
+    requests: {cpu: 20m, memory: 32Mi}
+    limits: {memory: 128Mi}
+networkPolicy:
+  enabled: true
+  # Adapt explicitly when ingress is deployed elsewhere.
+  ingressNamespace: kube-system
+  ingressPodLabels:
+    app.kubernetes.io/name: traefik
+  # Additional NetworkPolicy egress rules for explicitly configured scrape targets / IAM.
+  # The default permits HTTPS (OIDC) and DNS. No Kubernetes discovery permissions.
+  extraEgress: []
+# Public configuration only. Put bearer credentials in an independently managed
+# Secret and adapt the chart mounts before enabling authenticated scrape jobs.
+scrapeConfig: |
+  global:
+    scrape_interval: 30s
+  scrape_configs:
+    - job_name: prometheus
+      static_configs:
+        - targets: ['127.0.0.1:9090']

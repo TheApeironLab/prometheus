@@ -1,0 +1,6 @@
+apiVersion: v2
+name: prometheus-protected
+description: Independent Prometheus with an OIDC authenticated query endpoint
+type: application
+version: 0.1.0
+appVersion: 3.16.0
