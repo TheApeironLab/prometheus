@@ -1,22 +1,36 @@
-# Image digests are populated in the packaged chart from images.lock.json.
 images:
-  prometheus: ""
-  oauth2Proxy: ""
+  prometheus:
+    repository: prometheus/prometheus
+    tag: v3.16.0
+    digest: ''
+  oauth2-proxy:
+    repository: oauth2-proxy/oauth2-proxy
+    tag: v7.15.6
+    digest: ''
+  query-proxy:
+    repository: prometheus/query-proxy
+    tag: 0.1.1
+    digest: ''
+  operator:
+    repository: prometheus-operator/prometheus-operator
+    tag: v0.95.1
+    digest: ''
+  config-reloader:
+    repository: prometheus-operator/prometheus-config-reloader
+    tag: v0.95.1
+    digest: ''
 imagePullSecrets: []
 site:
-  host: ""
-  issuerUrl: ""
-  clientId: ""
-  # Existing Secret: client-secret and cookie-secret (32 random bytes, base64).
-  oidcSecret: ""
-  # IAM must emit a groups claim; access fails closed without an allowed group.
+  host: ''
+  issuerUrl: ''
+  clientId: ''
+  oidcSecret: ''
   allowedGroups: []
   groupsClaim: groups
-  # Optional existing Secret containing ca.crt for private IAM TLS.
-  caSecret: ""
+  caSecret: ''
 ingress:
   className: traefik
-  clusterIssuer: ""
+  clusterIssuer: ''
   tlsSecret: prometheus-tls
 storage:
   size: 10Gi
@@ -25,26 +39,42 @@ storage:
 retention: 7d
 resources:
   prometheus:
-    requests: {cpu: 100m, memory: 256Mi}
-    limits: {memory: 1Gi}
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
   oauth2Proxy:
-    requests: {cpu: 20m, memory: 32Mi}
-    limits: {memory: 128Mi}
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
 networkPolicy:
   enabled: true
-  # Adapt explicitly when ingress is deployed elsewhere.
   ingressNamespace: kube-system
   ingressPodLabels:
     app.kubernetes.io/name: traefik
-  # Additional NetworkPolicy egress rules for explicitly configured scrape targets / IAM.
-  # The default permits HTTPS (OIDC) and DNS. No Kubernetes discovery permissions.
   extraEgress: []
-# Public configuration only. Put bearer credentials in an independently managed
-# Secret and adapt the chart mounts before enabling authenticated scrape jobs.
-scrapeConfig: |
-  global:
-    scrape_interval: 30s
-  scrape_configs:
-    - job_name: prometheus
-      static_configs:
-        - targets: ['127.0.0.1:9090']
+  kubernetesApiPort: 6443
+vasi:
+  imageContract: vasi.images.v1
+  complete: true
+global:
+  imageRegistry: ''
+query:
+  enabled: false
+  authSecret: ''
+  tlsSecret: ''
+  allowedNamespace: vasi
+  allowedPodLabels:
+    app.kubernetes.io/name: vasi
+    app.kubernetes.io/component: ui
+operator:
+  version: 0.95.1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi

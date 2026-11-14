@@ -12,7 +12,18 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCES = {'prometheus': 'quay.io/prometheus/prometheus:v3.16.0',
-           'oauth2Proxy': 'quay.io/oauth2-proxy/oauth2-proxy:v7.15.6'}
+           'oauth2-proxy': 'quay.io/oauth2-proxy/oauth2-proxy:v7.15.6',
+           'operator': 'quay.io/prometheus-operator/prometheus-operator:v0.95.1',
+           'config-reloader': 'quay.io/prometheus-operator/prometheus-config-reloader:v0.95.1'}
+REPOSITORIES = {'prometheus': 'prometheus/prometheus',
+                'oauth2-proxy': 'oauth2-proxy/oauth2-proxy', 'query-proxy': 'prometheus/query-proxy',
+                'operator': 'prometheus-operator/prometheus-operator',
+                'config-reloader': 'prometheus-operator/prometheus-config-reloader'}
+
+
+def query_sources():
+    return {str(p.relative_to(ROOT)): sha(p) for p in sorted((ROOT / 'deploy/query-proxy').iterdir())
+            if p.name in {'Dockerfile', 'server.py'}}
 
 
 def run(*args, **kwargs):
@@ -39,10 +50,14 @@ def chart(out, version, records):
     (tree / 'Chart.yaml').write_text(text)
     import yaml
     values = yaml.safe_load((tree / 'values.yaml').read_text())
-    values['images'] = {r['role']: r['source'].rsplit(':', 1)[0] + '@' + r['digest'] for r in records}
+    values['images'] = {r['role']: {k: r[k] for k in ('repository', 'tag', 'digest')} for r in records}
     (tree / 'values.yaml').write_text(yaml.safe_dump(values))
-    run('helm', 'lint', str(tree), '-f', str(ROOT / 'deploy/site.example.yaml'))
-    run('helm', 'template', 'prometheus', str(tree), '-f', str(ROOT / 'deploy/site.example.yaml'))
+    for query_enabled in (False, True):
+        flags = ['-f', str(ROOT / 'deploy/site.example.yaml'), '--set', 'global.imageRegistry=registry.example.invalid']
+        if query_enabled:
+            flags += ['--set', 'query.enabled=true', '--set', 'query.authSecret=reader', '--set', 'query.tlsSecret=query-tls']
+        run('helm', 'lint', str(tree), *flags)
+        run('helm', 'template', 'prometheus', str(tree), *flags)
     out.joinpath('charts').mkdir()
     run('helm', 'package', str(tree), '-d', str(out / 'charts'))
     shutil.rmtree(tree)
@@ -97,16 +112,38 @@ def main():
     if target == 'images':
         materials.mkdir(parents=True, exist_ok=False)
         records = []
-        for role, source in SOURCES.items():
+        query_tag = 'chentu-experiment/prometheus-query:0.1.1'
+        base = Path(os.environ['BASE_MATERIALS']) if os.environ.get('BASE_MATERIALS') else None
+        previous = {r['role']: r for r in json.loads((base / 'images.lock.json').read_text())} if base else {}
+        if not base and subprocess.run(['docker', 'image', 'inspect', query_tag], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+            raise ValueError('query image tag exists; use a new version, never overwrite')
+        source_identity = query_sources()
+        if not base:
+            subprocess.run(['docker', 'build', '--platform', 'linux/amd64', '-t', query_tag,
+                        str(ROOT / 'deploy/query-proxy')], check=True)
+        for role, source in {**SOURCES, 'query-proxy': query_tag}.items():
             dest = materials / (role + '-amd64.oci.tar')
+            if role in previous:
+                row = previous[role]
+                if row['source'] != source or row['repository'] != REPOSITORIES[role] or (role == 'query-proxy' and row.get('buildSource') != source_identity):
+                    raise ValueError('reused image source mismatch')
+                verify_image(base / row['file'], row)
+                shutil.copy2(base / row['file'], dest)
+                records.append(row)
+                continue
             subprocess.run(['skopeo', 'copy', '--override-os', 'linux', '--override-arch', 'amd64',
-                            'docker://' + source, 'oci-archive:' + str(dest)], check=True)
+                            ('docker-daemon:' if role == 'query-proxy' else 'docker://') + source,
+                            'oci-archive:' + str(dest)], check=True)
             with tarfile.open(dest) as t:
                 digest = json.load(t.extractfile('index.json'))['manifests'][0]['digest']
-            row = dict(role=role, source=source, repository=source.rsplit(':', 1)[0],
+            row = dict(role=role, source=source, repository=REPOSITORIES[role],
                        tag=source.rsplit(':', 1)[1], digest=digest, file=dest.name,
                        sha256=sha(dest), bytes=dest.stat().st_size)
             verify_image(dest, row)
+            if role == 'query-proxy':
+                if source_identity != query_sources():
+                    raise ValueError('query source changed during build')
+                row['buildSource'] = source_identity
             records.append(row)
         dump(materials / 'images.lock.json', records)
         return
@@ -114,7 +151,7 @@ def main():
         sys.path.insert(0, str(ROOT / 'release/package'))
         import prepare_install
         archive = Path(os.environ['PACKAGE'])
-        with tempfile.TemporaryDirectory(dir=ROOT / 'dist') as tmp:
+        with tempfile.TemporaryDirectory(dir=archive.resolve().parent) as tmp:
             tree = Path(tmp) / 'restored'
             prepare_install.extract(archive, os.environ['ARCHIVE_SHA256'], tree)
             index = json.loads((tree / 'vasi-package.json').read_text())
@@ -127,13 +164,17 @@ def main():
         print('archive, declared files and OCI graph verified')
         return
     if target == 'deployment-test':
-        subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(ROOT / 'release/package'), '-p', 'test_*.py'], check=True)
+        subprocess.run([sys.executable, '-B', '-m', 'unittest', 'discover', '-s', str(ROOT / 'release/package'), '-p', 'test_*.py'], check=True)
         return
     records = json.loads((materials / 'images.lock.json').read_text())
-    if {r['role'] for r in records} != set(SOURCES) or len(records) != 2:
-        raise ValueError('exactly two image roles required')
+    if {r['role'] for r in records} != set(REPOSITORIES) or len(records) != 5:
+        raise ValueError('exactly five image roles required')
     for r in records:
-        if r['source'] != SOURCES[r['role']] or r['file'] != r['role'] + '-amd64.oci.tar':
+        source = SOURCES.get(r['role'], 'chentu-experiment/prometheus-query:0.1.1')
+        if (r['source'] != source or r['file'] != r['role'] + '-amd64.oci.tar'
+                or r['repository'] != REPOSITORIES[r['role']]
+                or r['tag'] != source.rsplit(':', 1)[1]
+                or (r['role'] == 'query-proxy' and r.get('buildSource') != query_sources())):
             raise ValueError('unrecognized material')
         verify_image(materials / r['file'], r)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -156,13 +197,14 @@ def main():
     shutil.copy2(ROOT / 'release/package/prepare_install.py', stage)
     shutil.copy2(ROOT / 'deploy/site.example.yaml', stage)
     shutil.copy2(ROOT / 'release/package/README.md', stage / 'README.md')
+    shutil.copytree(ROOT / 'deploy/operator', stage / 'operator')
     shutil.copy2(ROOT / 'LICENSE', stage)
     shutil.copy2(ROOT / 'NOTICE', stage)
     dump(stage / 'source-provenance.json', {
         'repository': 'https://github.com/TheApeironLab/prometheus',
         'commit': run('git', '-C', str(ROOT), 'rev-parse', 'HEAD').strip(),
         'workingTreeDirty': bool(run('git', '-C', str(ROOT), 'status', '--porcelain').strip()),
-        'adapterSha256': {str(p.relative_to(ROOT)): sha(p) for directory in ['release/package', 'deploy/chart']
+        'adapterSha256': {str(p.relative_to(ROOT)): sha(p) for directory in ['release/package', 'deploy/chart', 'deploy/query-proxy', 'deploy/operator']
                            for p in (ROOT / directory).rglob('*') if p.is_file() and '__pycache__' not in str(p)},
         'images': records, 'installation': 'not-run', 'channel': (os.environ.get('CHANNEL') or 'development')})
     chartpath = stage / 'charts' / pkg.name

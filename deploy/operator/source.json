@@ -1,0 +1,18 @@
+{
+  "version": "v0.95.1",
+  "url": "https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.95.1/bundle.yaml",
+  "upstreamSha256": "6f0faaf14999d63451ecbf0d689350ecce3eeda44576d25918878c5119d618fa",
+  "crdsSha256": "a552762f1302061514b9580cec44902aecf0205b6ba3c831a1b2ed5dab7606d7",
+  "crds": [
+    "alertmanagerconfigs.monitoring.coreos.com",
+    "alertmanagers.monitoring.coreos.com",
+    "podmonitors.monitoring.coreos.com",
+    "probes.monitoring.coreos.com",
+    "prometheusagents.monitoring.coreos.com",
+    "prometheuses.monitoring.coreos.com",
+    "prometheusrules.monitoring.coreos.com",
+    "scrapeconfigs.monitoring.coreos.com",
+    "servicemonitors.monitoring.coreos.com",
+    "thanosrulers.monitoring.coreos.com"
+  ]
+}

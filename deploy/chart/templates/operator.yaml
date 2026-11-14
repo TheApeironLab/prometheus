@@ -1,0 +1,208 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-operator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-operator
+rules:
+  - apiGroups:
+    - monitoring.coreos.com
+    resources:
+    - alertmanagers
+    - alertmanagers/finalizers
+    - prometheusagents
+    - prometheusagents/finalizers
+    - prometheuses
+    - prometheuses/finalizers
+    - thanosrulers
+    - thanosrulers/finalizers
+    verbs:
+    - patch
+  - apiGroups:
+    - monitoring.coreos.com
+    resources:
+    - alertmanagers/finalizers
+    - prometheusagents/finalizers
+    - prometheuses/finalizers
+    - thanosrulers/finalizers
+    verbs:
+    - update
+  - apiGroups:
+    - monitoring.coreos.com
+    resources:
+    - alertmanagers/status
+    - alertmanagerconfigs/status
+    - podmonitors/status
+    - probes/status
+    - prometheuses/status
+    - prometheusagents/status
+    - prometheusrules/status
+    - scrapeconfigs/status
+    - servicemonitors/status
+    - thanosrulers/status
+    verbs:
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - monitoring.coreos.com
+    resources:
+    - alertmanagers
+    - alertmanagerconfigs
+    - podmonitors
+    - probes
+    - prometheusagents
+    - prometheuses
+    - prometheusrules
+    - servicemonitors
+    - scrapeconfigs
+    - thanosrulers
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - apps
+    resources:
+    - statefulsets
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - ''
+    resources:
+    - configmaps
+    - secrets
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - delete
+  - apiGroups:
+    - ''
+    resources:
+    - pods
+    verbs:
+    - list
+  - apiGroups:
+    - ''
+    resources:
+    - services
+    - services/finalizers
+    verbs:
+    - get
+    - create
+    - update
+    - delete
+  - apiGroups:
+    - events.k8s.io
+    resources:
+    - events
+    verbs:
+    - patch
+    - create
+  - apiGroups:
+    - networking.k8s.io
+    resources:
+    - ingresses
+    verbs:
+    - get
+    - list
+    - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-operator
+subjects:
+  - {kind: ServiceAccount, name: {{ .Release.Name }}-operator, namespace: {{ .Release.Namespace }}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ .Release.Name }}-operator}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Namespace }}-{{ .Release.Name }}-operator-discovery
+rules:
+  - apiGroups: ['']
+    resources: [namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Namespace }}-{{ .Release.Name }}-operator-discovery
+subjects:
+  - {kind: ServiceAccount, name: {{ .Release.Name }}-operator, namespace: {{ .Release.Namespace }}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{ .Release.Namespace }}-{{ .Release.Name }}-operator-discovery}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-discovery
+rules:
+  - apiGroups: ['']
+    resources: [services, endpoints, pods]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-discovery
+subjects:
+  - {kind: ServiceAccount, name: {{ .Release.Name }}, namespace: {{ .Release.Namespace }}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ .Release.Name }}-discovery}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}-operator}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/instance: {{ .Release.Name }}-operator}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-operator
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {runAsNonRoot: true, runAsUser: 65534, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: operator
+          image: {{ include "prometheus.image" (list . "operator") | quote }}
+          args:
+            - --controller-id={{ .Release.Namespace }}.{{ .Release.Name }}
+            - --prometheus-instance-selector=app.kubernetes.io/instance={{ .Release.Name }}
+            - --alertmanager-instance-selector=monitoring.apeironlab.cn/disabled=yes,monitoring.apeironlab.cn/disabled=no
+            - --thanos-ruler-instance-selector=monitoring.apeironlab.cn/disabled=yes,monitoring.apeironlab.cn/disabled=no
+            - --disable-pprof=true
+            - --disable-unmanaged-prometheus-configuration=true
+            - --namespaces={{ .Release.Namespace }}
+            - --prometheus-instance-namespaces={{ .Release.Namespace }}
+            - --prometheus-config-reloader={{ include "prometheus.image" (list . "config-reloader") }}
+            - --config-reloader-cpu-request=10m
+            - --config-reloader-memory-request=32Mi
+            - --config-reloader-memory-limit=96Mi
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          resources: {{ toYaml .Values.operator.resources | nindent 12 }}

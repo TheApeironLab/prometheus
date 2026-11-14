@@ -2,133 +2,153 @@
 {{- $issuer := required "site.issuerUrl required" .Values.site.issuerUrl -}}
 {{- if not (hasPrefix "https://" $issuer) }}{{ fail "OIDC issuer must use HTTPS" }}{{ end -}}
 {{- if not .Values.site.allowedGroups }}{{ fail "site.allowedGroups must be explicit" }}{{ end -}}
+{{- if .Values.scrapeConfig }}{{ fail "scrapeConfig is legacy; use ServiceMonitor/PodMonitor" }}{{ end }}
+{{- if .Values.scrapeSecrets }}{{ fail "scrapeSecrets is legacy; use Monitor Secret references" }}{{ end }}
+{{- if not .Values.storage.retain }}{{ fail "Operator storage must retain PVCs" }}{{ end }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ .Release.Name }}
-automountServiceAccountToken: false
+automountServiceAccountToken: true
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ .Release.Name }}-config
-data:
-  prometheus.yml: |
-{{ .Values.scrapeConfig | indent 4 }}
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: {{ .Release.Name }}-data
-  {{- if .Values.storage.retain }}
-  annotations:
-    helm.sh/resource-policy: keep
-  {{- end }}
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: {{ .Values.storage.storageClassName | quote }}
-  resources:
-    requests:
-      storage: {{ .Values.storage.size }}
----
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
 metadata:
   name: {{ .Release.Name }}
+  labels: {app.kubernetes.io/instance: {{ .Release.Name }}}
+  annotations:
+    operator.prometheus.io/controller-id: {{ printf "%s.%s" .Release.Namespace .Release.Name | quote }}
 spec:
   replicas: 1
-  strategy:
-    type: Recreate
-  selector:
-    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}}
-  template:
-    metadata:
-      labels: {app.kubernetes.io/instance: {{ .Release.Name }}}
-      annotations:
-        checksum/config: {{ .Values.scrapeConfig | sha256sum }}
-    spec:
-      serviceAccountName: {{ .Release.Name }}
-      automountServiceAccountToken: false
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets: {{ toYaml . | nindent 8 }}
-      {{- end }}
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 65534
-        runAsGroup: 65534
-        fsGroup: 65534
-        seccompProfile: {type: RuntimeDefault}
-      containers:
-        - name: prometheus
-          image: {{ required "images.prometheus required" .Values.images.prometheus | quote }}
-          args:
-            - --config.file=/etc/prometheus/prometheus.yml
-            - --storage.tsdb.path=/prometheus
-            - --storage.tsdb.retention.time={{ .Values.retention }}
-            - --web.listen-address=127.0.0.1:9090
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities: {drop: [ALL]}
-          readinessProbe:
-            exec:
-              command: [/bin/wget, -Y, "off", -q, -O, /dev/null, 'http://127.0.0.1:9090/-/ready']
-          resources: {{ toYaml .Values.resources.prometheus | nindent 12 }}
-          volumeMounts:
-            - {name: config, mountPath: /etc/prometheus, readOnly: true}
-            - {name: data, mountPath: /prometheus}
-        - name: oauth2-proxy
-          image: {{ required "images.oauth2Proxy required" .Values.images.oauth2Proxy | quote }}
-          args:
-            - --provider=oidc
-            {{- if .Values.site.caSecret }}
-            - --provider-ca-file=/etc/iam-ca/ca.crt
-            - --use-system-trust-store=true
-            {{- end }}
-            - --oidc-issuer-url={{ $issuer }}
-            - --client-id={{ required "site.clientId required" .Values.site.clientId }}
-            - --redirect-url=https://{{ $host }}/oauth2/callback
-            - --http-address=0.0.0.0:4180
-            - --upstream=http://127.0.0.1:9090/
-            - --email-domain=*
-            - --scope=openid profile email groups
-            - --oidc-groups-claim={{ .Values.site.groupsClaim }}
-            {{- range .Values.site.allowedGroups }}
-            - --allowed-group={{ . }}
-            {{- end }}
-            - --code-challenge-method=S256
-            - --cookie-secure=true
-            - --cookie-samesite=lax
-            - --reverse-proxy=true
-            - --skip-provider-button=true
-            - --skip-jwt-bearer-tokens=false
-            - --cookie-refresh=5m
-            - --cookie-expire=1h
-          {{- if .Values.site.caSecret }}
-          volumeMounts:
-            - {name: iam-ca, mountPath: /etc/iam-ca, readOnly: true}
-          {{- end }}
-          env:
-            - name: OAUTH2_PROXY_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef: {name: {{ required "site.oidcSecret required" .Values.site.oidcSecret }}, key: client-secret}
-            - name: OAUTH2_PROXY_COOKIE_SECRET
-              valueFrom:
-                secretKeyRef: {name: {{ .Values.site.oidcSecret }}, key: cookie-secret}
-          ports: [{name: http, containerPort: 4180}]
-          readinessProbe: {httpGet: {path: /ready, port: http}}
-          livenessProbe: {httpGet: {path: /ping, port: http}}
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities: {drop: [ALL]}
-          resources: {{ toYaml .Values.resources.oauth2Proxy | nindent 12 }}
-      volumes:
+  version: v3.16.0
+  image: {{ include "prometheus.image" (list . "prometheus") | quote }}
+  serviceAccountName: {{ .Release.Name }}
+  listenLocal: true
+  enableAdminAPI: false
+  enableRemoteWriteReceiver: false
+  retention: {{ .Values.retention }}
+  evaluationInterval: 30s
+  scrapeInterval: 30s
+  arbitraryFSAccessThroughSMs: {deny: true}
+  overrideHonorLabels: true
+  ignoreNamespaceSelectors: true
+  serviceMonitorNamespaceSelector:
+    matchLabels: {kubernetes.io/metadata.name: {{ .Release.Namespace }}}
+  podMonitorNamespaceSelector:
+    matchLabels: {kubernetes.io/metadata.name: {{ .Release.Namespace }}}
+  serviceMonitorSelector:
+    matchLabels: {monitoring.apeironlab.cn/instance: {{ .Release.Name }}}
+  podMonitorSelector:
+    matchLabels: {monitoring.apeironlab.cn/instance: {{ .Release.Name }}}
+  probeSelector:
+    matchLabels: {monitoring.apeironlab.cn/disabled: "true"}
+  scrapeConfigSelector:
+    matchLabels: {monitoring.apeironlab.cn/disabled: "true"}
+  ruleSelector:
+    matchLabels: {monitoring.apeironlab.cn/instance: {{ .Release.Name }}}
+  enforcedSampleLimit: 50000
+  enforcedTargetLimit: 1000
+  podMetadata:
+    labels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/name: prometheus}
+  imagePullSecrets: {{ toYaml .Values.imagePullSecrets | nindent 4 }}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    fsGroup: 65534
+    seccompProfile: {type: RuntimeDefault}
+  resources: {{ toYaml .Values.resources.prometheus | nindent 4 }}
+  persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+  storage:
+    volumeClaimTemplate:
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: {{ .Values.storage.storageClassName | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.size }}
+  # Explicit overrides make every operator-generated image visible to Vasi's
+  # rendered container inspection; the controller uses the same locked image.
+  initContainers:
+    - name: init-config-reloader
+      image: {{ include "prometheus.image" (list . "config-reloader") | quote }}
+  containers:
+    - name: prometheus
+      image: {{ include "prometheus.image" (list . "prometheus") | quote }}
+    - name: config-reloader
+      image: {{ include "prometheus.image" (list . "config-reloader") | quote }}
+    - name: oauth2-proxy
+      image: {{ include "prometheus.image" (list . "oauth2-proxy") | quote }}
+      args:
+        - --provider=oidc
         {{- if .Values.site.caSecret }}
-        - {name: iam-ca, secret: {secretName: {{ .Values.site.caSecret }}}}
+        - --provider-ca-file=/etc/iam-ca/ca.crt
+        - --use-system-trust-store=true
         {{- end }}
-        - {name: config, configMap: {name: {{ .Release.Name }}-config}}
-        - {name: data, persistentVolumeClaim: {claimName: {{ .Release.Name }}-data}}
+        - --oidc-issuer-url={{ $issuer }}
+        - --client-id={{ required "site.clientId required" .Values.site.clientId }}
+        - --redirect-url=https://{{ $host }}/oauth2/callback
+        - --http-address=0.0.0.0:4180
+        - --upstream=http://127.0.0.1:9090/
+        - --email-domain=*
+        - --scope=openid profile email groups
+        - --oidc-groups-claim={{ .Values.site.groupsClaim }}
+        {{- range .Values.site.allowedGroups }}
+        - --allowed-group={{ . }}
+        {{- end }}
+        - --code-challenge-method=S256
+        - --cookie-secure=true
+        - --cookie-samesite=lax
+        - --reverse-proxy=true
+        - --skip-provider-button=true
+        - --skip-jwt-bearer-tokens=false
+        - --cookie-refresh=5m
+        - --cookie-expire=1h
+      {{- if .Values.site.caSecret }}
+      volumeMounts:
+        - {name: iam-ca, mountPath: /etc/iam-ca, readOnly: true}
+      {{- end }}
+      env:
+        - name: OAUTH2_PROXY_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef: {name: {{ required "site.oidcSecret required" .Values.site.oidcSecret }}, key: client-secret}
+        - name: OAUTH2_PROXY_COOKIE_SECRET
+          valueFrom:
+            secretKeyRef: {name: {{ .Values.site.oidcSecret }}, key: cookie-secret}
+      ports: [{name: http, containerPort: 4180}]
+      readinessProbe: {httpGet: {path: /ready, port: http}}
+      livenessProbe: {httpGet: {path: /ping, port: http}}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}
+      resources: {{ toYaml .Values.resources.oauth2Proxy | nindent 12 }}
+    {{- if .Values.query.enabled }}
+    - name: query-proxy
+      image: {{ include "prometheus.image" (list . "query-proxy") | quote }}
+      ports: [{name: query, containerPort: 9443}]
+      readinessProbe: {tcpSocket: {port: query}}
+      livenessProbe: {tcpSocket: {port: query}, initialDelaySeconds: 10}
+      resources:
+        requests: {cpu: 10m, memory: 24Mi}
+        limits: {memory: 96Mi}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}
+      volumeMounts:
+        - {name: query-auth, mountPath: /etc/query-auth, readOnly: true}
+        - {name: query-tls, mountPath: /etc/query-tls, readOnly: true}
+    {{- end }}
+  volumes:
+    {{- if .Values.query.enabled }}
+    - {name: query-auth, secret: {secretName: {{ required "query.authSecret required" .Values.query.authSecret }}}}
+    - {name: query-tls, secret: {secretName: {{ required "query.tlsSecret required" .Values.query.tlsSecret }}}}
+    {{- end }}
+    {{- if .Values.site.caSecret }}
+    - {name: iam-ca, secret: {secretName: {{ .Values.site.caSecret }}}}
+    {{- end }}
+
 ---
 apiVersion: v1
 kind: Service
@@ -161,3 +181,14 @@ spec:
               service:
                 name: {{ .Release.Name }}
                 port: {name: http}
+
+{{- if .Values.query.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-query
+spec:
+  selector: {app.kubernetes.io/instance: {{ .Release.Name }}}
+  ports: [{name: https, port: 9443, targetPort: query}]
+{{- end }}

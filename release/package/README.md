@@ -1,60 +1,86 @@
-# Prometheus 独立受保护应用
+# Prometheus Operator 组件 0.2.1
 
-部署包版本 0.1.0；Prometheus 3.16.0，oauth2-proxy 7.15.6，Linux AMD64。
-首版基于固定官方发行镜像，而非声称从 fork 源码编译。
-状态：development / installation-not-run。无集群实装、SSO 或持久化验收结论。
-不包含 Grafana、Alertmanager、exporter、Prometheus Operator 或集群自动发现。
+状态：development / installation-not-run。应用适配版本 0.2.1，Prometheus 3.16.0，
+Operator/config-reloader 0.95.1，oauth2-proxy 7.15.6，查询代理 0.1.1，Linux AMD64。
+仅封装构建与契约检查不代表集群安装、SSO、升级或 TSDB 迁移验收通过。
 
-## 构建
+## 构建和校验
 
-依赖 Python >=3.12、PyYAML、Helm 3、Skopeo、Git。保留上游 Makefile 的
-build/test/lint 语义；`make deployment-test` 检查部署适配。
+使用仓库 Makefile；Python、PyYAML、Helm、Skopeo、Docker、Git 为构建依赖。
 
-    make images MATERIALS=/absolute/new/materials
-    make check MATERIALS=/absolute/new/materials OUTPUT=/absolute/new/check
+    make images VERSION=0.2.1 MATERIALS=/absolute/new/materials BASE_MATERIALS=/absolute/previous/materials
     make deployment-test
-    make package VERSION=0.1.0 MATERIALS=/absolute/new/materials OUTPUT=/absolute/new/package
-    make verify PACKAGE=/absolute/new/package/prometheus-0.1.0-amd64-full.tar.gz ARCHIVE_SHA256=<trusted-sha>
+    make package VERSION=0.2.1 MATERIALS=/absolute/new/materials OUTPUT=/absolute/new/package
+    make verify PACKAGE=/absolute/new/package/prometheus-0.2.1-amd64-full.tar.gz ARCHIVE_SHA256=TRUSTED_SHA
 
-所有输出目录必须不存在，不覆盖历史材料；images 从官方固定 tag 获取，记录实际
-单平台 OCI manifest 和所有 blob 摘要，后续封包使用锁定的本地材料。
-package 写归档同时计算 SHA256；verify 是显式深度复验。
-首版没有基包，package-slim 明确拒绝执行。
+BASE_MATERIALS 可选；只有来源、源码及 OCI 摘要匹配的镜像才复用。五种镜像完整纳入包。
+外层 SHA256 在压缩时计算；显式 verify 安全解包并检查文件及 OCI 闭包。不覆盖旧输出。
 
-## 安装
+## 平台前置与 Vasi 安装
 
-1. 从可信渠道取得外层 SHA256；使用随交付提供的 prepare_install.py：
+1. 从可信渠道取得外层 SHA256，使用交付的 prepare_install.py 验证后安全解包。
+2. 平台管理员审阅 operator/source.json 和 crds.yaml。在原 CA 验证的管理员上下文运行：
 
-       python3 prepare_install.py PACKAGE.tar.gz --sha256 TRUSTED_SHA --output NEW_DIRECTORY
+       python3 operator/prepare.py --kubeconfig /private/site-kubeconfig
+       python3 operator/prepare.py --kubeconfig /private/site-kubeconfig --apply
 
-   不从未经认证的归档提取脚本后直接执行。外层校验通过后安全解包，不重复扫描镜像。
-2. 在 Vasi 导入 `vasi-package.json` 声明的 Chart 和两张镜像，保留 Vasi 自身的摘要、
-   导入及部署校验。按当前 Vasi UI 的包导入流程操作；本工具不持有管理员凭据。
-3. 建立独立 namespace `monitoring`。在 IAM 建立 confidential OIDC client，启用
-   Authorization Code 与 S256；准确登记 https://HOST/oauth2/callback。配置 groups
-   scope/claim，并只给获准用户分配 site.allowedGroups 声明的组。此版不自动配发 IAM client。
-4. 在该 namespace 独立配发 site.oidcSecret：client-secret 和 cookie-secret；后者为
-   32 个随机字节的 base64 表示。凭据不写 values、Git、分发包或日志。
-5. 复制 site.example.yaml 为私有现场 values，调整域名、issuer、客户端、组、TLS 与
-   ingress 网络选择器。私有 IAM CA 可通过 site.caSecret 引用含 ca.crt 的独立 Secret；禁止跳过 TLS 校验。
-   若 IAM HTTPS 不是 443，显式补充 extraEgress。
-6. 将 images.prometheus / images.oauth2Proxy 覆盖为 Vasi 导入后显示的现场仓库摘要
-   引用；不要假设隔离目标能访问 quay.io。通过 Vasi 预览并安装 Chart（release 名建议
-   prometheus，namespace monitoring），检查部署、证书、PVC 和代理日志。
-   管理员排障也可 `helm upgrade --install prometheus charts/*.tgz -n monitoring -f PRIVATE_VALUES`。
-7. 检查匿名访问跳转 IAM、有组用户成功、无组用户拒绝、Pod IP:9090 不可直连、
-   /api/v1/status/config 中无管理接口开启、重启后 TSDB 保留。未完成前不标记实装通过。
+   前一条只做 server dry-run；后一条再应用并等待 CRD Established。不会 force-conflicts。
+   CRD 是集群共享平台资源，不能跟应用卸载自动删除。已有 Operator 的站点必须先检查
+   CRD 版本及 namespace 管理范围，避免两个控制器接管同一实例。本版使用 namespace.release 的 controller-id，
+   显式标记自己管理的 Prometheus CR；只部署专用 namespace。
+   包中固定的十种 CRD 属于该版本控制器 API，不代表启用十种服务；不部署 Grafana、
+   Alertmanager 或 Thanos。CRD 大文件采用 server-side apply，避免客户端 annotation 限制。
+3. 使用 Vasi 正常流程导入 vasi-package.json 中的五镜像和 Chart。
+   CRD 前置文件不伪装成普通应用 Chart。执行器需要 monitoring namespace 内的
+   Prometheus CR、ServiceAccount、Role/RoleBinding、Deployment、Service、Ingress、
+   NetworkPolicy 管理权限，以及 Chart 声明的两个具名集群 RBAC 对象的创建/bind 权限。
+   由平台管理员审阅并授权；不得自动提权或给 Vasi Web 增加管理员凭据。
+4. 准备 site.example.yaml；配发 OIDC client（Authorization Code + S256）、限定组、
+   OIDC Secret(client-secret/cookie-secret)、原 CA Secret、HTTPS 域名与证书。
+   原凭据不进入包或 values；不得关闭 TLS 校验。query.enabled=true 时另配
+   query.authSecret(token) 与 query.tlsSecret(tls.crt/tls.key)。
+5. Vasi 预览后安装 namespace monitoring、release prometheus。检查 Operator Deployment、
+   Prometheus CR 状态、它生成的 StatefulSet/Pod、PVC、SSO 及真实查询；不能仅凭
+   Helm 命令退出 0 判定完成。Operator 仅管理当前 namespace。
 
-## 边界与升级
+## 采集和权限
 
-Prometheus 只监听 loopback；Service/Ingress 仅连接代理。Kubernetes 抓取不继承
-用户或执行器身份，默认不挂载 SA token、无集群 RBAC。默认仅抓取自身；增添目标时
-需同时配置 scrapeConfig 与 extraEgress。默认允许 HTTPS 出站用于 IAM。
-访问策略是 IAM groups + 代理检查；不是 Vasi 细粒度应用角色自动映射。
-API 当前仅支持代理浏览器会话，不承诺 Vasi 委托令牌直接调用或自动化 API 身份。
-关闭管理、生命周期及 remote-write 接收接口。保留代理 cookie 默认大小限制；组很多
-时应评估独立会话存储，首版未包含 Redis。
+GPU 组件与 Prometheus 放在同一监控 namespace；GPU ServiceMonitor 标签
+`monitoring.apeironlab.cn/instance: prometheus` 必须匹配 release 名。
+ServiceMonitor/PodMonitor 在本 namespace 发现 Service/Pod；ignoreNamespaceSelectors=true
+阻止 Monitor 扩大目标 namespace。本版不支持跨 namespace 采集，后续须显式扩展 RBAC。
+Monitor 创建权限只授予受信任维护者；标签是选择条件，不是身份授权。
+禁止任意容器文件引用；采集认证及 CA 使用 Monitor 中的 Secret key 引用。
+Prometheus SA 仅有本 namespace 服务发现读权限，不读 Secret；Operator 按其工作职责
+读取本 namespace Secret、管理配置和 StatefulSet。集群权限只读 namespace 元数据和
+StorageClass。不会采集 kubelet、自动创建 Node 权限或安装 GPU 驱动。
 
-PVC 默认保留，升级采用单副本 Recreate，存在短暂不可用。升级前备份数据，保留
-相同 release/namespace/PVC、OIDC client 与 cookie Secret；Secret 轮换后显式重启
-Deployment。本版不支持多副本 HA、自动扩容、自动回滚或 TSDB 降级兼容承诺。
+采集需要在 networkPolicy.extraEgress 显式允许 exporter 的 namespace/Pod/端口；
+exporter 的入口策略同时限定 Prometheus Pod。内置 DNS/API/HTTPS 出站不替代采集授权。
+默认 Prometheus 仅监听 loopback，remote-write receiver 和 admin API 关闭；Operator
+配置重载使用内部生命周期端点，仅本 Pod 可达，查询代理不放行该端点。
+
+## Vasi 查询绑定
+
+保留 `https://RELEASE-query.NAMESPACE.svc:9443`、原 CA 和独立 Bearer Secret 契约。
+query.allowedNamespace/allowedPodLabels 共同约束来源；浏览器 IAM 会话和机器 token
+分开。查询代理只接受 GET query/query_range，拒绝写入、admin、reload，凭据不传浏览器。
+Vasi 继续自身用户授权，不访问 Operator 或使用其身份。
+
+## 从 0.1.x 重装（不保留历史指标）
+
+可以卸载旧 Prometheus release，再按旧 PVC 的实际 namespace/name/UID 单独删除其专用数据卷。
+旧 Chart 的 keep 策略会留下 PVC，不能仅卸载后认为数据已清理；禁止按 namespace 批量删卷。
+原 IAM client、OIDC Secret、查询 Secret、CA 和域名复用；不删除 exporter 或其他应用数据。
+然后先准备 CRD，以原 release/namespace 安装本版，验证 Operator/StatefulSet/PVC、认证、
+ServiceMonitor 实际目标和 Vasi 查询。此流程会清空历史指标；实装尚未验收。
+
+## 从 0.1.x 迁移（需要保留历史指标）
+
+这是 Deployment 到 Operator StatefulSet 的架构变更，禁止直接覆盖旧 release。
+用新 release 名/PVC 并行准备，保留旧 Deployment/PVC、OIDC 及查询 Secret。
+需要历史 TSDB 时先停写并备份，在原 Prometheus 版本下离线迁移到新 PVC，禁止双写同卷。
+核验历史查询、重启数据、认证后再切换 Vasi 查询绑定；旧现场保留作回退。
+本包不自动复制数据、不自动删除旧卷、不承诺 TSDB 降级兼容。新 PVC 默认 Retain。
+CRD 升级单独审阅后 server-side dry-run/apply，不删除重建 CRD；控制器镜像和 CRD
+版本必须同步。实际迁移和控制器重启恢复本轮尚未验收。
