@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "global",
+    "images",
+    "vasi"
+  ],
+  "properties": {
+    "global": {
+      "type": "object",
+      "required": [
+        "imageRegistry"
+      ],
+      "properties": {
+        "imageRegistry": {
+          "type": "string"
+        }
+      }
+    },
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prometheus",
+        "oauth2-proxy",
+        "query-proxy",
+        "operator",
+        "config-reloader"
+      ],
+      "properties": {
+        "prometheus": {
+          "type": "object",
+          "required": [
+            "repository",
+            "tag"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+([._/-][a-z0-9]+)*$"
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^$|^sha256:[0-9a-f]{64}$"
+            }
+          }
+        },
+        "oauth2-proxy": {
+          "type": "object",
+          "required": [
+            "repository",
+            "tag"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+([._/-][a-z0-9]+)*$"
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^$|^sha256:[0-9a-f]{64}$"
+            }
+          }
+        },
+        "query-proxy": {
+          "type": "object",
+          "required": [
+            "repository",
+            "tag"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+([._/-][a-z0-9]+)*$"
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^$|^sha256:[0-9a-f]{64}$"
+            }
+          }
+        },
+        "operator": {
+          "type": "object",
+          "required": [
+            "repository",
+            "tag"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+([._/-][a-z0-9]+)*$"
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^$|^sha256:[0-9a-f]{64}$"
+            }
+          }
+        },
+        "config-reloader": {
+          "type": "object",
+          "required": [
+            "repository",
+            "tag"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+([._/-][a-z0-9]+)*$"
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^$|^sha256:[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
+    },
+    "vasi": {
+      "type": "object",
+      "required": [
+        "imageContract",
+        "complete"
+      ],
+      "properties": {
+        "imageContract": {
+          "const": "vasi.images.v1"
+        },
+        "complete": {
+          "const": true
+        }
+      }
+    },
+    "query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "authSecret",
+        "tlsSecret",
+        "allowedNamespace",
+        "allowedPodLabels"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "authSecret": {
+          "type": "string",
+          "pattern": "^$|^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+        },
+        "tlsSecret": {
+          "type": "string",
+          "pattern": "^$|^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+        },
+        "allowedNamespace": {
+          "type": "string",
+          "pattern": "^$|^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+        },
+        "allowedPodLabels": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

@@ -5,6 +5,8 @@
 extends: default
 ignore: |
   **/node_modules
+  # Helm source is checked after rendering by make deployment-test.
+  deploy/chart/templates/**
   web/api/v1/testdata/openapi_*_golden.yaml
 
 rules:

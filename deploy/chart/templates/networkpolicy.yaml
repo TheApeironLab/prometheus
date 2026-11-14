@@ -1,0 +1,55 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}
+          podSelector:
+            matchLabels: {{ toYaml .Values.networkPolicy.ingressPodLabels | nindent 14 }}
+      ports: [{protocol: TCP, port: 4180}]
+    {{- if .Values.query.enabled }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ required "query.allowedNamespace required" .Values.query.allowedNamespace }}
+          podSelector:
+            matchLabels: {{ toYaml .Values.query.allowedPodLabels | nindent 14 }}
+      ports: [{protocol: TCP, port: 9443}]
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    - ports: [{protocol: TCP, port: 443}, {protocol: TCP, port: {{ .Values.networkPolicy.kubernetesApiPort }}}]
+    {{- with .Values.networkPolicy.extraEgress }}
+    {{ toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+
+{{- if .Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-operator
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}-operator}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    - ports: [{protocol: TCP, port: 443}, {protocol: TCP, port: {{ .Values.networkPolicy.kubernetesApiPort }}}]
+{{- end }}

@@ -33,3 +33,7 @@ npm_licenses.tar.bz2
 
 # Ignore parser debug
 y.output
+
+# Protected application build outputs.
+/dist/
+/release/package/__pycache__/

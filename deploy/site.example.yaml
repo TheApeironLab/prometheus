@@ -1,0 +1,8 @@
+site:
+  host: prometheus.example.invalid
+  issuerUrl: https://iam.example.invalid/realms/platform
+  clientId: prometheus
+  oidcSecret: prometheus-oidc
+  allowedGroups: [prometheus-readers]
+ingress:
+  clusterIssuer: platform-ca

@@ -1,3 +1,4 @@
+ifeq ($(filter help check images chart package package-slim verify deployment-test,$(MAKECMDGOALS)),)
 # Copyright The Prometheus Authors
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -257,3 +258,8 @@ bump-go-version:
 generate-fuzzing-seed-corpus:
 	@echo ">> Generating fuzzing seed corpus"
 	@$(GO) generate -tags fuzzing ./util/fuzzing/corpus_gen
+
+endif
+
+# Independent Vasi application distribution; upstream build/test remain available.
+include release/package/Makefile
